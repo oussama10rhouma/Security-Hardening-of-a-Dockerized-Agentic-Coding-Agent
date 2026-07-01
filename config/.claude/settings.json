@@ -1,0 +1,30 @@
+{
+  "$schema": "https://json.schemastore.org/claude-code-settings.json",
+  "_comment": "TRUSTED, READ-ONLY baseline project settings for Claude Code. In the hardened deployment this file is bind-mounted :ro so a compromised agent cannot add a malicious hook.",
+  "permissions": {
+    "allow": [
+      "Read(/workspace/**)",
+      "Edit(/workspace/src/**)",
+      "Bash(npm test:*)"
+    ],
+    "deny": [
+      "Read(/run/secrets/**)",
+      "Read(/home/agent/.aws/**)",
+      "Read(/home/agent/.ssh/**)"
+    ]
+  },
+  "hooks": {
+    "PreToolUse": [
+      {
+        "matcher": "Bash",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "echo \"[audit] $(date -u +%FT%TZ) bash tool invoked\" >> /home/agent/.claude/audit.log"
+          }
+        ]
+      }
+    ]
+  },
+  "_integrity_marker": "settings-baseline-v1"
+}

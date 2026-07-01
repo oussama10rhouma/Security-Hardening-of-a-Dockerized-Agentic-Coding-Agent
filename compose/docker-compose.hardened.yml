@@ -1,0 +1,63 @@
+# =============================================================================
+# HARDENED deployment. Same image, locked-down run-time posture:
+#   - non-root user (uid 10001)
+#   - read-only root filesystem + tmpfs for the few writable, ephemeral paths
+#   - agent config (settings.json / CLAUDE.md / skills / .mcp.json) RE-MOUNTED :ro
+#   - NO secret mounted into the container
+#   - no network at all (egress control)
+#   - cap-drop ALL, no-new-privileges, restricted seccomp profile
+#   - cgroup limits (memory / pids / cpu)
+# Expectation: all six attacks BLOCKED; the workspace stays writable.
+#
+# Run from the project root (SECCOMP_PROFILE must be an absolute path):
+#   SECCOMP_PROFILE=$(realpath seccomp/agent-seccomp.json) \
+#   docker compose -f compose/docker-compose.hardened.yml run --rm agent \
+#       bash /opt/attacks/run_all_attacks.sh
+# =============================================================================
+name: agentic-hardened
+
+services:
+  agent:
+    build:
+      context: ../docker
+      dockerfile: Dockerfile
+    image: agentic-hardening:latest
+    user: "10001:10001"                       # non-root
+    working_dir: /workspace
+
+    # --- egress control: no network namespace connectivity at all ----------
+    network_mode: "none"
+
+    # --- read-only root FS + tmpfs for ephemeral writable paths ------------
+    read_only: true
+    tmpfs:
+      - /tmp
+      - /run
+      - /home/agent/.claude                   # agent runtime state (ephemeral)
+
+    # --- kernel-level restrictions -----------------------------------------
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
+      - seccomp=${SECCOMP_PROFILE:-../seccomp/agent-seccomp.json}
+
+    # --- cgroup resource limits --------------------------------------------
+    mem_limit: 512m
+    pids_limit: 128
+    cpus: 1.0
+
+    # --- filesystem partitioning -------------------------------------------
+    volumes:
+      # workspace stays READ-WRITE (the agent must remain able to edit code)
+      - ../.run/hardened/repo:/workspace
+      # ...but the agent CONFIG is overlaid READ-ONLY on top of the workspace
+      - ../.run/hardened/repo/.claude/settings.json:/workspace/.claude/settings.json:ro
+      - ../.run/hardened/repo/CLAUDE.md:/workspace/CLAUDE.md:ro
+      - ../.run/hardened/repo/.mcp.json:/workspace/.mcp.json:ro
+      - ../.run/hardened/repo/.claude/skills:/workspace/.claude/skills:ro
+      # the attack harness, read-only
+      - ../attacks:/opt/attacks:ro
+      # NOTE: NO secret is mounted here (it never enters the sandbox).
+
+    command: ["bash", "/opt/attacks/run_all_attacks.sh"]

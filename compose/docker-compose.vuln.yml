@@ -1,0 +1,55 @@
+# =============================================================================
+# VULNERABLE deployment (the "naive" agent). Everything permissive:
+#   - runs as root
+#   - agent config mounted READ-WRITE (no :ro)
+#   - the (fake) secret is mounted INTO the container
+#   - full egress on a bridge network to the local collector
+#   - no cap-drop, no read-only root, no seccomp profile, no resource limits
+# Expectation: all six attacks SUCCEED.
+#
+# Run from the project root:
+#   docker compose -f compose/docker-compose.vuln.yml run --rm agent \
+#       bash /opt/attacks/run_all_attacks.sh
+# =============================================================================
+name: agentic-vuln
+
+services:
+  collector:
+    image: python:3.12-alpine
+    command: ["python", "/srv/server.py"]
+    volumes:
+      - ../collector/server.py:/srv/server.py:ro
+      - ../results/vuln:/data
+    networks: [demonet]
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:9000/').read()"]
+      interval: 2s
+      timeout: 3s
+      retries: 15
+      start_period: 2s
+
+  agent:
+    build:
+      context: ../docker
+      dockerfile: Dockerfile
+    image: agentic-hardening:latest
+    depends_on:
+      collector:
+        condition: service_healthy
+    user: "0:0"                      # VULN: root
+    working_dir: /workspace
+    environment:
+      COLLECTOR_URL: "http://collector:9000/exfil"
+    volumes:
+      # VULN: workspace AND config all writable (no :ro overlays)
+      - ../.run/vuln/repo:/workspace
+      # VULN: the fake secret enters the container
+      - ../.run/vuln/secrets/fake_api_key:/run/secrets/fake_api_key:ro
+      # the attack harness (injected at run time, read-only)
+      - ../attacks:/opt/attacks:ro
+    networks: [demonet]              # VULN: unrestricted egress to collector
+    command: ["bash", "/opt/attacks/run_all_attacks.sh"]
+
+networks:
+  demonet:
+    driver: bridge

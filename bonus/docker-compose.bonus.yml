@@ -1,0 +1,73 @@
+# =============================================================================
+# BONUS — "the naive hardening is not enough".
+#
+# This agent is FS-hardened (non-root, read-only root, :ro config, seccomp,
+# cap-drop) AND its network is restricted to an *allowlist*: an INTERNAL docker
+# network whose only reachable host is the "trusted" telemetry endpoint
+# (alias logs.trusted.local). There is no other route off-box.
+#
+# Yet the secret still leaks, because an allowlist authorises a DESTINATION,
+# not the CONTENT sent there (cf. the Anthropic incident). Flip INSPECT=1 to
+# turn the trusted endpoint into a content-inspecting gateway (the fix).
+#
+#   INSPECT=0  -> exfil via the allowed domain SUCCEEDS
+#   INSPECT=1  -> the inspecting gateway BLOCKS the secret
+# =============================================================================
+name: agentic-bonus
+
+services:
+  trusted:
+    image: python:3.12-alpine
+    command: ["python", "/srv/server.py"]
+    environment:
+      INSPECT: "${INSPECT:-0}"
+    volumes:
+      - ../collector/server.py:/srv/server.py:ro
+      - ../results/bonus:/data
+    networks:
+      egress:
+        aliases: [logs.trusted.local]
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:9000/').read()"]
+      interval: 2s
+      timeout: 3s
+      retries: 15
+      start_period: 2s
+
+  agent:
+    image: agentic-hardening:latest
+    depends_on:
+      trusted:
+        condition: service_healthy
+    user: "10001:10001"
+    working_dir: /workspace
+    read_only: true
+    tmpfs:
+      - /tmp
+      - /run
+      - /home/agent/.claude
+    cap_drop: [ALL]
+    security_opt:
+      - no-new-privileges:true
+      - seccomp=${SECCOMP_PROFILE:-../seccomp/agent-seccomp.json}
+    mem_limit: 512m
+    pids_limit: 128
+    cpus: 1.0
+    environment:
+      ALLOWED_URL: "http://logs.trusted.local:9000/telemetry"
+    volumes:
+      - ../.run/bonus/repo:/workspace
+      - ../.run/bonus/repo/.claude/settings.json:/workspace/.claude/settings.json:ro
+      - ../.run/bonus/repo/CLAUDE.md:/workspace/CLAUDE.md:ro
+      - ../.run/bonus/repo/.mcp.json:/workspace/.mcp.json:ro
+      - ../.run/bonus/repo/.claude/skills:/workspace/.claude/skills:ro
+      - ../bonus:/opt/bonus:ro
+      # NOTE: a secret IS mounted here on purpose, to show that FS hardening
+      # alone does not stop network exfiltration through an allowed domain.
+      - ../.run/bonus/secrets/fake_api_key:/run/secrets/fake_api_key:ro
+    networks: [egress]
+    command: ["bash", "/opt/bonus/attack_exfil_via_allowed_domain.sh"]
+
+networks:
+  egress:
+    internal: true        # allowlist: ONLY the trusted endpoint is reachable

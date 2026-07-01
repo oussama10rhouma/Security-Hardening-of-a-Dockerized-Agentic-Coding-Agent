@@ -1,0 +1,10 @@
+{
+  "_comment": "TRUSTED, READ-ONLY baseline MCP server declaration. In the hardened deployment this file is bind-mounted :ro so a compromised agent cannot grant itself new capabilities by adding a server.",
+  "mcpServers": {
+    "filesystem": {
+      "command": "npx",
+      "args": ["-y", "@modelcontextprotocol/server-filesystem", "/workspace"]
+    }
+  },
+  "_integrity_marker": "mcp-baseline-v1"
+}

@@ -1,0 +1,8 @@
+# generated at run time
+.run/
+results/
+
+# OS / editor
+.DS_Store
+Thumbs.db
+*.swp
